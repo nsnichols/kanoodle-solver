@@ -1,38 +1,53 @@
-use colored::Colorize;
+use crate::board::Board;
+use crate::placements::{PlacedPiece, Placements};
 
-mod shapes;
 mod board;
+mod pieces;
+mod placements;
 
 fn main() {
+    let mut placement = placements::Placements::new();
     let mut board = board::Board::new();
+    let mut solutions = 0;
+    let mut piece = Option::Some(placement.get_first_piece_to_try());
 
-    let shape_e = shapes::shape_e();
-    let shape_g = shapes::shape_g();
-    let shape_j = shapes::shape_j();
-    let shape_i = shapes::shape_i();
-    let shape_a = shapes::shape_a();
-    let shape_c = shapes::shape_c();
-    let shape_d = shapes::shape_d();
-    let shape_l = shapes::shape_l();
-    let shape_h = shapes::shape_h();
-    let shape_b = shapes::shape_b();
-    let shape_f = shapes::shape_f();
-    let shape_k = shapes::shape_k();
+    while piece.is_some() {
+        let p = piece.unwrap();
+        if board.does_shape_fit(p.shape) {
+            board.add_shape(p.shape, p.name);
+            piece = placement.get_next_piece_to_try_after_success(p).map(|success| success.piece);
+        } else {
+            piece = get_next_piece_to_try_after_failure(&mut placement, &mut board, p);
+        }
 
-    board = board.add_shape(&shape_e);
-    board = board.add_shape(&shape_g);
-    board = board.add_shape(&shape_j);
-    board = board.add_shape(&shape_i);
-    board = board.add_shape(&shape_a);
-    board = board.add_shape(&shape_c);
-    board = board.add_shape(&shape_d);
-    board = board.add_shape(&shape_l);
-    board = board.add_shape(&shape_h);
-    board = board.add_shape(&shape_b);
-    board = board.add_shape(&shape_f);
-    board = board.add_shape(&shape_k);
+        if board.solved() {
+            solutions += 1;
+            println!("{}", board);
+            println!("{}", placement);
+            println!("solution: {}", solutions);
+            // We got a solution. Remove the last piece and find the next one.
+            piece = match placement.remove_last_piece() {
+                Option::Some(last) => {
+                    board.remove_shape(last.name);
+                    get_next_piece_to_try_after_failure(&mut placement, &mut board, last)
+                }
+                _ => Option::None
+            }
+        }
+    }
+}
 
-    println!("{}", board);
+fn get_next_piece_to_try_after_failure(placement: &mut Placements, board: &mut Board, failed_piece: PlacedPiece) -> Option<PlacedPiece> {
+    match placement.get_next_piece_to_try_after_failure(failed_piece) {
+        Option::Some(placements::PieceAfterFailure { piece, to_remove }) => {
+            // There was a failure. Make sure the board reverts any necessary piece placements
+            for piece_to_remove in to_remove {
+                board.remove_shape(piece_to_remove.name);
+            }
+            Option::Some(piece)
+        }
+        _ => Option::None
+    }
 }
 
 

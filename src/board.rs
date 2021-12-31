@@ -1,23 +1,19 @@
-use colored::*;
 use std::fmt;
 use std::fmt::{Formatter};
 
-use once_cell::sync::Lazy;
+use crate::pieces::Shape;
 
-use crate::shapes::Shape;
+const EMPTY_SLOT: char = ' ';
 
-static EMPTY_SLOT: Lazy<ColoredString> = Lazy::new(||" ".clear());
-
-pub struct Board<'a> {
-    bits: [[&'a ColoredString; 11]; 5],
+pub struct Board {
+    cells: [[char; 11]; 5],
     next_pos: (usize, usize),
 }
 
-
-impl<'a> Board<'a> {
-    pub fn new() -> Self {
+impl Board {
+    pub const fn new() -> Board {
         Board {
-            bits: [[&*EMPTY_SLOT; 11]; 5],
+            cells: [[EMPTY_SLOT; 11]; 5],
             next_pos: (0, 0),
         }
     }
@@ -25,7 +21,7 @@ impl<'a> Board<'a> {
     pub fn solved(&self) -> bool {
         for i in 0..5 {
             for j in 0..11 {
-                if self.bits[i][j] == &*EMPTY_SLOT {
+                if self.cells[i][j] == EMPTY_SLOT {
                     return false;
                 }
             }
@@ -34,21 +30,23 @@ impl<'a> Board<'a> {
     }
 
     pub fn does_shape_fit(&self, shape: &Shape) -> bool {
-        let mut offset = 0;
+        let mut offset: i32 = 0;
         for i in 0..4 {
-            if !shape.bits[0][i] {
+            if !shape.is_set(0, i) {
                 offset -= 1;
+            } else {
+                break;
             }
         }
 
         for i in 0..4 {
             for j in 0..4 {
-                if shape.bits[i][j] {
-                    let (r, c) = (i + self.next_pos.0, j + self.next_pos.1 + offset);
+                if shape.is_set(i, j) {
+                    let (r, c): (usize, i32) = (i + self.next_pos.0, (j + self.next_pos.1) as i32 + offset);
                     if r >= 5 || c < 0 || c >= 11 {
                         return false;
                     }
-                    if self.bits[r][c] != &*EMPTY_SLOT {
+                    if self.cells[r][c as usize] != EMPTY_SLOT {
                         return false;
                     }
                 }
@@ -57,61 +55,64 @@ impl<'a> Board<'a> {
         true
     }
 
-    pub fn add_shape(&self, shape: &'a Shape) -> Board<'a> {
-        let mut bits = [[&*EMPTY_SLOT; 11]; 5];
-        bits.copy_from_slice(&self.bits);
-
+    pub fn add_shape(&mut self, shape: &Shape, letter: char) {
         let mut offset: i32 = 0;
         for i in 0..4 {
-            println!("{}", shape.bits[0][i]);
-            if !shape.bits[0][i] {
+            if !shape.is_set(0, i) {
                 offset -= 1;
             } else {
                 break;
             }
         }
 
-        println!("offset => {} for shape\n{}", offset, shape);
-
         for i in 0..4 {
             for j in 0..4 {
-                if shape.bits[i][j] {
-                    let (r, c) = (i + self.next_pos.0, ((j + self.next_pos.1) as i32 + offset) as usize);
-                    bits[r][c] = &shape.letter;
+                if shape.is_set(i, j) {
+                    let (r, c) = (i + self.next_pos.0, ((j + self.next_pos.1) as i32 + offset));
+                    self.cells[r][c as usize] = letter;
 
                 }
             }
         }
 
+        'outer: for i in 0..5 {
+            for j in 0..11 {
+                if self.cells[i][j] == EMPTY_SLOT {
+                    self.next_pos = (i, j);
+                    break 'outer;
+                }
+            }
+        }
+    }
+
+    pub fn remove_shape(&mut self, name: char) {
+        let mut updated_next_pos = false;
         for i in 0..5 {
             for j in 0..11 {
-                if bits[i][j] == &*EMPTY_SLOT {
-                    return Board {
-                        next_pos: (i, j),
-                        bits
+                if self.cells[i][j] == name {
+                    self.cells[i][j] = EMPTY_SLOT;
+                    if !updated_next_pos {
+                        updated_next_pos = true;
+                        self.next_pos = (i, j);
                     }
+
                 }
             }
-        }
-
-        Board {
-            next_pos: (0, 0),
-            bits
         }
     }
 }
 
-impl fmt::Display for Board<'_> {
+impl fmt::Display for Board {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        writeln!(f, "-------------");
+        writeln!(f, "-------------")?;
         for i in 0..5 {
-            write!(f, "|");
+            write!(f, "|")?;
             for j in 0..11 {
-                write!(f, "{}", self.bits[i][j]);
+                write!(f, "{}", self.cells[i][j])?;
             }
-            writeln!(f, "|");
+            writeln!(f, "|")?;
         }
-        writeln!(f, "-------------");
+        writeln!(f, "-------------")?;
         writeln!(f, "next position({}, {})", self.next_pos.0, self.next_pos.1)
     }
 }
