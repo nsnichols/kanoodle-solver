@@ -1,5 +1,5 @@
 [package]
-name = "kanoodle-rust"
+name = "kanoodle-solver"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,3 +7,4 @@ edition = "2021"
 
 [dependencies]
 once_cell = "1.9.0"
+structopt = "0.3.25"

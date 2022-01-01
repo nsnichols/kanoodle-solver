@@ -1,13 +1,25 @@
+use once_cell::sync::Lazy;
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
-use once_cell::sync::Lazy;
 
+/// Defines a specific Kanoodle shape in a 4 x 4 grid of cells.
+///
+/// # Example
+/// L-shape (`A`)
+/// ```
+/// [[true, false, false, false],
+/// [true, false, false, false],
+/// [true, true, false, false],
+/// [false, false, false, false]]
+/// ```
 #[derive(Clone, Hash, Eq, PartialEq)]
 pub struct Shape {
-    cells: [[bool; 4]; 4]
+    cells: [[bool; 4]; 4],
 }
 
 impl Shape {
+    // If the cell at the specified row and column is set, that
+    // cell is part of the shape.
     pub fn is_set(&self, row: usize, col: usize) -> bool {
         if row < 4 && col < 4 {
             self.cells[row][col]
@@ -16,29 +28,71 @@ impl Shape {
         }
     }
 
+    /// Creates a new shape that has been rotated 90 degrees clockwise
     pub fn rotate(&self) -> Shape {
         Shape {
             cells: [
-                [self.cells[3][0], self.cells[2][0], self.cells[1][0], self.cells[0][0]],
-                [self.cells[3][1], self.cells[2][1], self.cells[1][1], self.cells[0][1]],
-                [self.cells[3][2], self.cells[2][2], self.cells[1][2], self.cells[0][2]],
-                [self.cells[3][3], self.cells[2][3], self.cells[1][3], self.cells[0][3]],
-            ]
-
+                [
+                    self.cells[3][0],
+                    self.cells[2][0],
+                    self.cells[1][0],
+                    self.cells[0][0],
+                ],
+                [
+                    self.cells[3][1],
+                    self.cells[2][1],
+                    self.cells[1][1],
+                    self.cells[0][1],
+                ],
+                [
+                    self.cells[3][2],
+                    self.cells[2][2],
+                    self.cells[1][2],
+                    self.cells[0][2],
+                ],
+                [
+                    self.cells[3][3],
+                    self.cells[2][3],
+                    self.cells[1][3],
+                    self.cells[0][3],
+                ],
+            ],
         }
     }
 
+    /// Creates a new shape that is a mirror image of the shape.
     pub fn mirror(&self) -> Shape {
         Shape {
             cells: [
-                [self.cells[0][0], self.cells[1][0], self.cells[2][0], self.cells[3][0]],
-                [self.cells[0][1], self.cells[1][1], self.cells[2][1], self.cells[3][1]],
-                [self.cells[0][2], self.cells[1][2], self.cells[2][2], self.cells[3][2]],
-                [self.cells[0][3], self.cells[1][3], self.cells[2][3], self.cells[3][3]],
-            ]
+                [
+                    self.cells[0][0],
+                    self.cells[1][0],
+                    self.cells[2][0],
+                    self.cells[3][0],
+                ],
+                [
+                    self.cells[0][1],
+                    self.cells[1][1],
+                    self.cells[2][1],
+                    self.cells[3][1],
+                ],
+                [
+                    self.cells[0][2],
+                    self.cells[1][2],
+                    self.cells[2][2],
+                    self.cells[3][2],
+                ],
+                [
+                    self.cells[0][3],
+                    self.cells[1][3],
+                    self.cells[2][3],
+                    self.cells[3][3],
+                ],
+            ],
         }
     }
 
+    // Creates a new shape that has been shifted to the top left to remove whitespace.
     pub fn snap_to_top_left(&self) -> Shape {
         let mut cells = [[false; 4]; 4];
         cells.copy_from_slice(&self.cells);
@@ -59,30 +113,17 @@ impl Shape {
             cells[3] = [cells[3][1], cells[3][2], cells[3][3], false];
         }
 
-        Shape {
-            cells
-        }
-    }
-
-    pub fn render(&self, letter: &String) -> String {
-        let mut rendered_string = Vec::new();
-        let empty = String::from(" ");
-        let new_line = String::from("\n");
-
-        for row in self.cells {
-            for cell in row {
-                rendered_string.push(if cell { letter.to_string() } else { empty.to_string() })
-            }
-            rendered_string.push(new_line.to_string())
-        }
-
-        rendered_string.join("")
+        Shape { cells }
     }
 }
 
+/// Defines a Kanoodle piece.
+///
+/// A piece consists of a name (letter) A - L, and a vector that contains
+/// all possible orientations it may be legally by placed in.
 pub struct Piece {
     pub letter: String,
-    pub orientations: Vec<Shape>
+    pub orientations: Vec<Shape>,
 }
 
 impl Display for Piece {
@@ -92,6 +133,11 @@ impl Display for Piece {
 }
 
 impl Piece {
+    /// Parses a string that defines a `Piece`'s shape in its
+    /// default orientation.
+    ///
+    /// The remaining orientations are automatically derived from the
+    /// default orientation.
     pub fn parse(value: &str, letter: char) -> Piece {
         let mut cells = [[false; 4]; 4];
         let mut row: usize = 0;
@@ -101,7 +147,7 @@ impl Piece {
             if v == '\n' {
                 row += 1;
                 col = 0;
-                continue
+                continue;
             }
             if v == letter {
                 cells[row][col] = true;
@@ -109,15 +155,24 @@ impl Piece {
             col += 1;
         }
 
-        let orientations = capture_orientations(Shape { cells }).into_iter().map(|s| s).collect();
+        let orientations = capture_orientations(Shape { cells })
+            .into_iter()
+            .map(|s| s)
+            .collect();
 
         Piece {
             letter: letter.to_string(),
-            orientations
+            orientations,
         }
     }
 }
 
+/// Given a single shape, this function determines all possible orientations of that
+/// shape and returns them in a vector.
+///
+/// The orientations in the vector returned in a consistent order.
+///
+/// `to_int` determines the sort order.
 fn capture_orientations(shape: Shape) -> Vec<Shape> {
     let mut set = HashSet::new();
 
@@ -162,85 +217,117 @@ fn to_int(shape: &Shape) -> i32 {
     return v;
 }
 
+/// Holds a static map of all possible Kanoodle pieces keyed by
+/// their letter names.
 pub static PIECES: Lazy<HashMap<char, Piece>> = Lazy::new(|| {
     let mut pieces = HashMap::new();
 
-    pieces.insert('A', Piece::parse(
-        "A\n\
+    pieces.insert(
+        'A',
+        Piece::parse(
+            "A\n\
                AAA",
-        'A'
-    ));
+            'A',
+        ),
+    );
 
-    pieces.insert('B', Piece::parse(
-        "BB\n\
+    pieces.insert(
+        'B',
+        Piece::parse(
+            "BB\n\
                BBB",
-        'B'
-    ));
+            'B',
+        ),
+    );
 
-    pieces.insert('C', Piece::parse(
-        ".C\n\
+    pieces.insert(
+        'C',
+        Piece::parse(
+            ".C\n\
                .C\n\
                .C\n\
                CC",
-        'C'
-    ));
+            'C',
+        ),
+    );
 
-    pieces.insert('D', Piece::parse(
-        "DDDD\n\
+    pieces.insert(
+        'D',
+        Piece::parse(
+            "DDDD\n\
                ..D",
-        'D'
-    ));
+            'D',
+        ),
+    );
 
-    pieces.insert('E', Piece::parse(
-        "EE\n\
+    pieces.insert(
+        'E',
+        Piece::parse(
+            "EE\n\
                .EEE",
-        'E'
-    ));
+            'E',
+        ),
+    );
 
-    pieces.insert('F', Piece::parse(
-        "F\n\
+    pieces.insert(
+        'F',
+        Piece::parse(
+            "F\n\
                FF",
-        'F'
-    ));
+            'F',
+        ),
+    );
 
-    pieces.insert('G', Piece::parse(
-        "GGG\n\
+    pieces.insert(
+        'G',
+        Piece::parse(
+            "GGG\n\
                ..G\n\
                ..G",
-        'G'
-    ));
+            'G',
+        ),
+    );
 
-    pieces.insert('H', Piece::parse(
-        "HH\n\
+    pieces.insert(
+        'H',
+        Piece::parse(
+            "HH\n\
                .HH\n\
                ..H",
-        'H'
-    ));
+            'H',
+        ),
+    );
 
-    pieces.insert('I', Piece::parse(
-        "II\n\
+    pieces.insert(
+        'I',
+        Piece::parse(
+            "II\n\
                .I\n\
                II",
-        'I'
-    ));
+            'I',
+        ),
+    );
 
-    pieces.insert('J', Piece::parse(
-        "JJJJ",
-        'J'
-    ));
+    pieces.insert('J', Piece::parse("JJJJ", 'J'));
 
-    pieces.insert('K', Piece::parse(
-        "KK\n\
+    pieces.insert(
+        'K',
+        Piece::parse(
+            "KK\n\
                KK",
-        'K'
-    ));
+            'K',
+        ),
+    );
 
-    pieces.insert('L', Piece::parse(
-        ".L\n\
+    pieces.insert(
+        'L',
+        Piece::parse(
+            ".L\n\
                LLL\n\
                .L",
-        'L'
-    ));
+            'L',
+        ),
+    );
 
     pieces
 });
