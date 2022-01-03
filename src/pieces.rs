@@ -1,120 +1,324 @@
+use crate::Layers;
 use once_cell::sync::Lazy;
+use std::cmp::max;
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 
-/// Defines a specific Kanoodle shape in a 4 x 4 grid of cells.
+define_layers!(ShapeLayers, bool, false,
+    { layer: 0, rows: 5, cols: 5 },
+    { layer: 1, rows: 4, cols: 4 },
+    { layer: 2, rows: 3, cols: 3 },
+    { layer: 3, rows: 2, cols: 2 },
+    { layer: 4, rows: 1, cols: 1 }
+);
+
+enum ShiftInstruction {
+    Up,
+    Down,
+    Left,
+    // Right,
+    Stop,
+}
+
+/// Defines a specific Kanoodle shape
 ///
 /// # Example
 /// L-shape (`A`)
 /// ```
-/// [[true, false, false, false],
-/// [true, false, false, false],
-/// [true, true, false, false],
-/// [false, false, false, false]]
+/// [[true, false, false, false, false],
+/// [true, false, false, false, false],
+/// [true, true, false, false, false],
+/// [false, false, false, false, false],
+/// [false, false, false, false, false]]
 /// ```
 #[derive(Clone, Hash, Eq, PartialEq)]
 pub struct Shape {
-    cells: [[bool; 4]; 4],
+    layers: ShapeLayers,
+    pub is_3d: bool,
 }
 
 impl Shape {
-    // If the cell at the specified row and column is set, that
+    // If the cell at the specified layer, row, and column is set, that
     // cell is part of the shape.
-    pub fn is_set(&self, row: usize, col: usize) -> bool {
-        if row < 4 && col < 4 {
-            self.cells[row][col]
-        } else {
-            false
-        }
+    pub fn is_set(&self, layer: usize, row: usize, col: usize) -> bool {
+        *self.layers.at(layer, row, col)
+    }
+
+    pub fn dimensions(&self, layer: usize) -> (usize, usize) {
+        self.layers.dimensions(layer)
+    }
+
+    pub const fn layer_count(&self) -> usize {
+        ShapeLayers::layer_count()
     }
 
     /// Creates a new shape that has been rotated 90 degrees clockwise
     pub fn rotate(&self) -> Shape {
+        let mut rotated = self.layers.clone();
+        Shape::transform_each_layer_2d(&self.layers, &mut rotated, |row, col, max_col| {
+            (max_col - col, row)
+        });
         Shape {
-            cells: [
-                [
-                    self.cells[3][0],
-                    self.cells[2][0],
-                    self.cells[1][0],
-                    self.cells[0][0],
-                ],
-                [
-                    self.cells[3][1],
-                    self.cells[2][1],
-                    self.cells[1][1],
-                    self.cells[0][1],
-                ],
-                [
-                    self.cells[3][2],
-                    self.cells[2][2],
-                    self.cells[1][2],
-                    self.cells[0][2],
-                ],
-                [
-                    self.cells[3][3],
-                    self.cells[2][3],
-                    self.cells[1][3],
-                    self.cells[0][3],
-                ],
-            ],
+            layers: rotated,
+            is_3d: self.is_3d,
         }
     }
 
     /// Creates a new shape that is a mirror image of the shape.
-    pub fn mirror(&self) -> Shape {
+    pub fn reflect(&self) -> Shape {
+        let mut reflected = self.layers.clone();
+        Shape::transform_each_layer_2d(&self.layers, &mut reflected, |row, col, _| (col, row));
         Shape {
-            cells: [
-                [
-                    self.cells[0][0],
-                    self.cells[1][0],
-                    self.cells[2][0],
-                    self.cells[3][0],
-                ],
-                [
-                    self.cells[0][1],
-                    self.cells[1][1],
-                    self.cells[2][1],
-                    self.cells[3][1],
-                ],
-                [
-                    self.cells[0][2],
-                    self.cells[1][2],
-                    self.cells[2][2],
-                    self.cells[3][2],
-                ],
-                [
-                    self.cells[0][3],
-                    self.cells[1][3],
-                    self.cells[2][3],
-                    self.cells[3][3],
-                ],
-            ],
+            layers: reflected,
+            is_3d: self.is_3d,
         }
     }
 
     // Creates a new shape that has been shifted to the top left to remove whitespace.
     pub fn snap_to_top_left(&self) -> Shape {
-        let mut cells = [[false; 4]; 4];
-        cells.copy_from_slice(&self.cells);
+        // Shift up until we find a non-falsy value in a row at any layer.
+        let mut layers = Shape::shift(&self.layers, |ls| {
+            if !ls.0[0][0]
+                && !ls.0[0][1]
+                && !ls.0[0][2]
+                && !ls.0[0][3]
+                && !ls.0[0][4]
+                && !ls.1[0][0]
+                && !ls.1[0][1]
+                && !ls.1[0][2]
+                && !ls.1[0][3]
+                && !ls.2[0][0]
+                && !ls.2[0][1]
+                && !ls.2[0][2]
+                && !ls.3[0][0]
+                && !ls.3[0][1]
+                && !ls.4[0][0]
+            {
+                ShiftInstruction::Up
+            } else {
+                ShiftInstruction::Stop
+            }
+        });
 
-        // Shift up until we find a non-falsy value in a row.
-        while !cells[0][0] && !cells[0][1] && !cells[0][2] && !cells[0][3] {
-            cells[0] = cells[1];
-            cells[1] = cells[2];
-            cells[2] = cells[3];
-            cells[3] = [false; 4];
-        }
+        // Shift left until we find a non-falsy value in a column at any layer.
+        layers = Shape::shift(&layers, |ls| {
+            if !ls.0[0][0]
+                && !ls.0[1][0]
+                && !ls.0[2][0]
+                && !ls.0[3][0]
+                && !ls.0[4][0]
+                && !ls.1[0][0]
+                && !ls.1[1][0]
+                && !ls.1[2][0]
+                && !ls.1[3][0]
+                && !ls.2[0][0]
+                && !ls.2[1][0]
+                && !ls.2[2][0]
+                && !ls.3[0][0]
+                && !ls.3[1][0]
+                && !ls.4[0][0]
+            {
+                ShiftInstruction::Left
+            } else {
+                ShiftInstruction::Stop
+            }
+        });
 
-        // Shift left until we find a non-falsy value in a column.
-        while !cells[0][0] && !cells[1][0] && !cells[2][0] && !cells[3][0] {
-            cells[0] = [cells[0][1], cells[0][2], cells[0][3], false];
-            cells[1] = [cells[1][1], cells[1][2], cells[1][3], false];
-            cells[2] = [cells[2][1], cells[2][2], cells[2][3], false];
-            cells[3] = [cells[3][1], cells[3][2], cells[3][3], false];
-        }
-
-        Shape { cells }
+        return Shape {
+            layers,
+            is_3d: self.is_3d,
+        };
     }
+
+    pub fn erect(&self) -> Shape {
+        if self.is_3d {
+            return self.clone();
+        }
+
+        // Ensure we're starting at:
+        // C C C C ·
+        // C · · · ·
+        // · · · · ·
+        // · · · · ·
+        let aligned = self.snap_to_top_left();
+
+        // Shift the shape until no part of it is to the right of the tl-br diagonal:
+        // · · · · ·
+        // · · · · ·
+        // · · · · ·
+        // C C C C ·
+        // C · · · ·
+
+        // The shape isn't 3d right now so we only have to worry about layer 0 when
+        // shifting it.
+        let layer0 = &mut Shape::shift(&aligned.layers, |ls| {
+            if ls.0[0][1] || ls.0[1][2] || ls.0[2][3] || ls.0[3][4] {
+                ShiftInstruction::Down
+            } else {
+                ShiftInstruction::Stop
+            }
+        })
+        .0;
+
+        // Erect the shape to the north-east keeping all pieces on the tl-br diagonal as
+        // the pivots.
+        // Side view:
+        //     C
+        //    C ·
+        //   · C ·
+        //  · · C ·
+        // · · · C ·
+
+        // Pieces on the center diagonal remain in layer 0
+        // The next diagonal to the left is layer 1, the next is layer 2, etc.
+        // Start at layer4 and work backwards.
+
+        let layer4 = [[layer0[4][0]]];
+
+        let layer3 = [[layer0[3][0], false], [false, layer0[4][1]]];
+
+        let layer2 = [
+            [layer0[2][0], false, false],
+            [false, layer0[3][1], false],
+            [false, false, layer0[4][2]],
+        ];
+
+        let layer1 = [
+            [layer0[1][0], false, false, false],
+            [false, layer0[2][1], false, false],
+            [false, false, layer0[3][2], false],
+            [false, false, false, layer0[4][3]],
+        ];
+
+        // Now that we've copied the proper values into the layers above 0, we can
+        // update layer0 to clear out any values that moved to a different layer.
+        // This means that all bools other than then ones in the tl-br diagonal should
+        // be set to false.
+        for i in 0..5 {
+            for j in 0..5 {
+                if i != j {
+                    layer0[i][j] = false;
+                }
+            }
+        }
+
+        return Shape {
+            layers: ShapeLayers(*layer0, layer1, layer2, layer3, layer4),
+            is_3d: true,
+        };
+    }
+
+    fn shift(
+        layers: &ShapeLayers,
+        next_instruction: fn(to_be_shifted: &ShapeLayers) -> ShiftInstruction,
+    ) -> ShapeLayers {
+        let mut source = layers.clone();
+        let mut dest = layers.clone();
+
+        let mut max_size = 0usize;
+        for layer in 0..layers.layer_count() {
+            let (size, _) = layers.dimensions(layer);
+            max_size = max(max_size, size);
+        }
+
+        // Allow full shifts in every direction before giving up.
+        let mut remaining_iterations = max_size * 4;
+
+        while remaining_iterations > 0 {
+            match next_instruction(&dest) {
+                ShiftInstruction::Left => {
+                    Shape::transform_each_layer_2d(&source, &mut dest, |row, col, size| {
+                        (row, if col == size { 0usize } else { col + 1 })
+                    });
+                }
+                ShiftInstruction::Up => {
+                    Shape::transform_each_layer_2d(&source, &mut dest, |row, col, size| {
+                        (if row == size { 0usize } else { row + 1 }, col)
+                    });
+                }
+                // ShiftInstruction::Right => {
+                //     Shape::transform_each_layer_2d(&source, &mut dest, |row, col, size| {
+                //         (row, if col == 0 { size } else { col - 1 })
+                //     });
+                // }
+                ShiftInstruction::Down => {
+                    Shape::transform_each_layer_2d(&source, &mut dest, |row, col, size| {
+                        (if row == 0 { size } else { row - 1 }, col)
+                    });
+                }
+                ShiftInstruction::Stop => {
+                    return dest;
+                }
+            }
+
+            // Copy values back into source so we can updated dest again in the next iteration
+            // of the loop
+            std::mem::swap(&mut source, &mut dest);
+
+            remaining_iterations -= 1;
+        }
+
+        panic!("Detected infinite loop in shift logic");
+    }
+
+    fn transform_each_layer_2d(
+        layers: &ShapeLayers,
+        to_be_transformed: &mut ShapeLayers,
+        transformer: fn(usize, usize, usize) -> (usize, usize),
+    ) {
+        let layer_count = layers.layer_count();
+
+        for layer in 0..layer_count {
+            let (row_count, col_count) = layers.dimensions(layer);
+            assert_eq!(
+                row_count, col_count,
+                "A non-square layer cannot be transformed"
+            );
+            let size = row_count - 1;
+            for row in 0..row_count {
+                for col in 0..col_count {
+                    let (transformed_row, transformed_col) = transformer(row, col, size);
+                    let val = layers.at(layer, transformed_row, transformed_col);
+                    to_be_transformed.update(layer, row, col, *val);
+                }
+            }
+        }
+    }
+}
+
+const EMPTY_CELL: &str = "·";
+const FILLED_CELL: &str = "●";
+
+impl Display for Shape {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut vec = Vec::new();
+        if self.is_3d {
+            append_layer(&mut vec, &self.layers.4);
+            append_layer(&mut vec, &self.layers.3);
+            append_layer(&mut vec, &self.layers.2);
+            append_layer(&mut vec, &self.layers.1);
+        }
+
+        for row in self.layers.0 {
+            for col in row {
+                vec.push(if col { FILLED_CELL } else { EMPTY_CELL })
+            }
+            vec.push("\n")
+        }
+        writeln!(f, "{}", vec.join(""))?;
+
+        Result::Ok(())
+    }
+}
+
+fn append_layer<Level: AsRef<[Row]>, Row: AsRef<[bool]>>(vec: &mut Vec<&str>, bools: Level) {
+    for row in bools.as_ref() {
+        for col in row.as_ref() {
+            vec.push(if *col { FILLED_CELL } else { EMPTY_CELL });
+        }
+        vec.push("\n");
+    }
+    vec.push("\n");
 }
 
 /// Defines a Kanoodle piece.
@@ -128,7 +332,12 @@ pub struct Piece {
 
 impl Display for Piece {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} [+{}]", self.letter, self.orientations.len())
+        write!(
+            f,
+            "{} ({} orientations)",
+            self.letter,
+            self.orientations.len()
+        )
     }
 }
 
@@ -155,7 +364,7 @@ impl Piece {
             col += 1;
         }
 
-        let orientations = capture_orientations(Shape { cells })
+        let orientations = generate_orientations(cells)
             .into_iter()
             .map(|s| s)
             .collect();
@@ -173,30 +382,28 @@ impl Piece {
 /// The orientations in the vector returned in a consistent order.
 ///
 /// `to_int` determines the sort order.
-fn capture_orientations(shape: Shape) -> Vec<Shape> {
+fn generate_orientations(cells: [[bool; 4]; 4]) -> Vec<Shape> {
     let mut set = HashSet::new();
+    let mut layer0 = [[false; 5]; 5];
+    for i in 0..4 {
+        for j in 0..4 {
+            layer0[i][j] = cells[i][j];
+        }
+    }
 
-    set.insert(shape.clone().snap_to_top_left());
-    let next = shape.rotate();
-    set.insert(next.snap_to_top_left());
+    let shape = Shape {
+        layers: ShapeLayers(
+            layer0,
+            [[false; 4]; 4],
+            [[false; 3]; 3],
+            [[false; 2]; 2],
+            [[false; 1]; 1],
+        ),
+        is_3d: false,
+    };
 
-    let next = next.rotate();
-    set.insert(next.snap_to_top_left());
-
-    let next = next.rotate();
-    set.insert(next.snap_to_top_left());
-
-    let next = shape.mirror();
-    set.insert(next.snap_to_top_left());
-
-    let next = next.rotate();
-    set.insert(next.snap_to_top_left());
-
-    let next = next.rotate();
-    set.insert(next.snap_to_top_left());
-
-    let next = next.rotate();
-    set.insert(next.snap_to_top_left());
+    add_rotated_orientations(&shape, &mut set);
+    add_mirrored_orientations(&shape, &mut set);
 
     let mut vec: Vec<Shape> = set.into_iter().collect();
     vec.sort_by(|s1, s2| to_int(s1).cmp(&to_int(s2)));
@@ -204,17 +411,47 @@ fn capture_orientations(shape: Shape) -> Vec<Shape> {
     vec
 }
 
-fn to_int(shape: &Shape) -> i32 {
-    let mut v: i32 = 0;
-    for i in 0..4 {
-        let row_bonus = 10i32.pow(i as u32);
-        for j in 0..4 {
-            if shape.cells[i][j] {
-                v += j as i32 * row_bonus;
+fn add_rotated_orientations(shape: &Shape, set: &mut HashSet<Shape>) {
+    let mut next = shape.clone();
+    for _ in 0..4 {
+        set.insert(next.snap_to_top_left());
+        if !&next.is_3d {
+            // Add rotated 3d orientations.
+            add_rotated_orientations(&next.erect(), set);
+        }
+        // The last rotate in the loop brings us back to 0, so we can toss it.
+        next = next.rotate();
+    }
+}
+
+fn add_mirrored_orientations(shape: &Shape, set: &mut HashSet<Shape>) {
+    add_rotated_orientations(&shape.reflect(), set);
+}
+
+pub fn to_int(shape: &Shape) -> u64 {
+    let mut int_repr: u64 = 0;
+    let mut layer_bonus: u64 = 1;
+
+    for layer in 0..ShapeLayers::layer_count() {
+        layer_bonus = match layer {
+            0 => 1,
+            1 => 10000,
+            _ => layer_bonus * 100,
+        };
+
+        let (row_count, col_count) = shape.layers.dimensions(layer);
+
+        for row in 0..row_count {
+            let row_bonus: u64 = 10u64.pow(row as u32) * layer_bonus;
+            for col in 0..col_count {
+                if *shape.layers.at(layer, row, col) {
+                    int_repr += (col as u32 + 1u32) as u64 * row_bonus;
+                }
             }
         }
     }
-    return v;
+
+    int_repr
 }
 
 /// Holds a static map of all possible Kanoodle pieces keyed by

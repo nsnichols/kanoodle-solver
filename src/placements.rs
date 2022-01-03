@@ -39,6 +39,7 @@ pub struct PieceAfterFailure {
 pub struct Placements {
     positions: Vec<PieceSuggestion>,
     used_letters: HashSet<char>,
+    allow_3d_orientations: bool,
 }
 
 #[derive(Debug)]
@@ -54,11 +55,12 @@ impl FromStr for RequestedPiece {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let chars = &mut s.chars();
         let name = chars.nth(0).unwrap();
-        let orientation_index = chars.nth(1).unwrap().to_digit(10).unwrap() as usize;
+        let first_digit = chars.nth(1).unwrap().to_digit(10).unwrap();
+        let second_digit = chars.nth(0).unwrap().to_digit(10).unwrap();
 
         return Result::Ok(RequestedPiece {
             name,
-            orientation_index,
+            orientation_index: ((first_digit * 10) + second_digit) as usize,
         });
     }
 }
@@ -66,28 +68,63 @@ impl FromStr for RequestedPiece {
 impl Display for Placements {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         for position in &self.positions {
-            write!(f, "{}[{}]; ", position.name, position.orientation_index)?;
+            write!(f, "{}[{:02}]; ", position.name, position.orientation_index)?;
         }
         Result::Ok(())
     }
 }
 
 impl Placements {
-    pub fn new() -> Placements {
+    pub fn new(allow_3d_orientations: bool) -> Placements {
         Placements {
             positions: Vec::new(),
             used_letters: HashSet::new(),
+            allow_3d_orientations,
         }
     }
 
-    /// Initializes the state and provides the initial piece suggestion based on the
-    /// `start_at` piece.
-    pub fn initialize(&mut self, start_at: RequestedPiece) -> Option<PieceSuggestion> {
-        Option::Some(PieceSuggestion {
-            name: start_at.name,
-            orientation_index: start_at.orientation_index,
-            shape: get_piece_orientation(start_at.name, start_at.orientation_index).unwrap(),
-        })
+    /// Initializes the state and provides the initial piece suggestions based on the
+    /// `start_at` pieces.
+    pub fn initialize(&mut self, start_at: Vec<RequestedPiece>) -> Vec<PieceSuggestion> {
+        if start_at.is_empty() {
+            panic!("Placements must be initialized with at least one starting piece");
+        }
+
+        let suggestions: Vec<PieceSuggestion> = start_at
+            .iter()
+            .map(|requested| PieceSuggestion {
+                name: requested.name,
+                orientation_index: requested.orientation_index,
+                shape: get_piece_orientation(requested.name, requested.orientation_index).unwrap(),
+            })
+            .collect();
+
+        // The last piece cannot be added to the placement state. It is up to the caller
+        // to validate it and commit it if it is valid.
+        let suggestions_to_track = suggestions.len() - 1;
+
+        for i in 0..suggestions_to_track {
+            let suggestion = suggestions.get(i).unwrap();
+            if !self.used_letters.insert(suggestion.name) {
+                panic!(
+                    "Initial placements contain duplicated piece {}",
+                    suggestion.name
+                );
+            }
+            self.positions.push(suggestion.clone());
+        }
+
+        // We also need to check the last piece that we didn't push into the iterator
+        // is not already placed.
+        let last_piece = suggestions.last().unwrap();
+        if self.used_letters.contains(&last_piece.name) {
+            panic!(
+                "Initial placements contain duplicated piece {}",
+                last_piece.name
+            );
+        }
+
+        return suggestions;
     }
 
     /// Removes the last placed piece (if there was one) and returns it.
@@ -145,15 +182,18 @@ impl Placements {
         let next_orientation = get_piece_orientation(failure.name, next_index);
 
         if next_orientation.is_some() {
-            // We found another orientation for the piece, so let's return it to be tried.
-            return Option::Some(PieceAfterFailure {
-                piece: PieceSuggestion {
-                    name: failure.name,
-                    orientation_index: next_index,
-                    shape: next_orientation.unwrap(),
-                },
-                to_remove: Vec::new(),
-            });
+            let next = next_orientation.unwrap();
+            if !next.is_3d || self.allow_3d_orientations {
+                // We found another orientation for the piece, so let's return it to be tried.
+                return Option::Some(PieceAfterFailure {
+                    piece: PieceSuggestion {
+                        name: failure.name,
+                        orientation_index: next_index,
+                        shape: next,
+                    },
+                    to_remove: Vec::new(),
+                });
+            }
         }
 
         // There were no remaining orientations for the piece, therefore, lets try the next

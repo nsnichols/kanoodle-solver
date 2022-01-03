@@ -1,5 +1,6 @@
+use crate::board::{create_board, BoardType, Variation};
 use crate::placements::RequestedPiece;
-use crate::{placements, Board, PieceSuggestion, Placements};
+use crate::{placements, PieceSuggestion, Placements};
 
 /// Finds solutions between the starting_at piece (inclusive) and the ending_at path (exclusive)
 ///
@@ -28,25 +29,29 @@ use crate::{placements, Board, PieceSuggestion, Placements};
 ///   3. Otherwise, goto 1 with the new piece to try.
 ///
 /// # Arguments
-/// * `starting_at` - if not passed, `A[0]` will be used.
+/// * `starting_at` - if not passed, `A[00]` will be used.
 /// * `ending_at` - if not passed, a fake path will be created using a piece `Z`. This effectively
 ///   allows all solutions after starting_at to be returned.
-pub fn find_solutions(starting_at: Option<RequestedPiece>, ending_at: Option<Vec<RequestedPiece>>) {
-    println!("Finding solutions...");
+pub fn find_solutions(
+    starting_at: Option<Vec<RequestedPiece>>,
+    ending_at: Option<Vec<RequestedPiece>>,
+    board_type: Option<BoardType>,
+) {
+    let requested_board_type = board_type.unwrap_or(BoardType::Rectangle);
+
+    println!("Finding solutions for {:?} board", requested_board_type);
 
     // Placements keeps track of the available and used pieces at any given time. Pieces are always
     // ordered lexically (by name and then orientation) to ensure that once we've attempted to place
     // a piece in a specific context (previous pieces/orientation and positions), we will never try
     // that same permutation again. That means that as we ask for pieces, we'll eventually run out
     // of permutations to try and the algorithm will halt.
-    let mut placements = Placements::new();
+    let mut placements = Placements::new(requested_board_type == BoardType::Pyramid);
 
     // While placements track which pieces and orientations have been tried, the board tracks
     // where the pieces are placed, whether a piece will fit, and whether the board is in the
     // solved state.
-    let mut board = Board::new();
-
-    let ending_at_placement = convert_ending_at_to_placement_string(ending_at);
+    let mut board = create_board(requested_board_type);
 
     let mut solutions = 0u32;
 
@@ -56,10 +61,46 @@ pub fn find_solutions(starting_at: Option<RequestedPiece>, ending_at: Option<Vec
     // to start with K[0], the only solutions that can possibly be found will container either K[0] or
     // L[0] in the board's first position. (Note: given L[0]'s shape, no solutions with it in the first
     // position are possible).
-    let mut next_piece = placements.initialize(starting_at.unwrap_or(RequestedPiece {
+    let initial_pieces = starting_at.unwrap_or(vec![RequestedPiece {
         name: 'A',
         orientation_index: 0,
-    }));
+    }]);
+
+    println!(
+        "Starting at {}",
+        // Just copy everything in the vector and re-wrap in an Option to simplify the conversion
+        // to a string path. This is doing more work than necessary, but it's a one time startup
+        // cost. Improve this later.
+        convert_requested_pieces_to_path_string(copy_starting_at_pieces(&initial_pieces))
+    );
+
+    let ending_at_placement = convert_requested_pieces_to_path_string(ending_at);
+    println!(
+        "Ending at {}",
+        if ending_at_placement.starts_with("Z") {
+            "NO-LIMIT".to_string()
+        } else {
+            ending_at_placement.to_string()
+        }
+    );
+
+    let mut initial_pieces = placements.initialize(initial_pieces);
+    let mut next_piece = initial_pieces.pop();
+
+    // We're going to add all the initial pieces (except for the last one). We've initialized the iterator
+    // with them, but it is up to this logic to commit the last piece. The placements iterator does not save
+    // off its last suggestion until `get_next_piece_to_try_after_success` is called. If the shapes don't fit
+    // here, we panic and tell the caller to fix their initial path.
+    for piece in initial_pieces {
+        if board.does_shape_fit(piece.shape) {
+            board.add_shape(piece.shape, piece.name);
+        } else {
+            panic!(
+                "Unable to add initial piece {} to board. It does not fit. Initialization failed.",
+                piece.name
+            );
+        }
+    }
 
     // Now we start the solution loop. We will continue asking for the next piece to place until we
     // find a solution that exceeds the ending_at path, or we run out of pieces to try in every
@@ -92,8 +133,8 @@ pub fn find_solutions(starting_at: Option<RequestedPiece>, ending_at: Option<Vec
             }
 
             solutions += 1;
-            println!("{}", board);
             println!("{}", placements);
+            println!("{}", board);
 
             // We found a solution, but there could be more. We'll remove the last piece we placed,
             // pretend like it failed placement in the board, and try the next piece. If there are
@@ -116,7 +157,7 @@ pub fn find_solutions(starting_at: Option<RequestedPiece>, ending_at: Option<Vec
 /// any necessary pieces from the `Board`.
 fn get_next_piece_to_try_after_failure(
     placements: &mut Placements,
-    board: &mut Board,
+    board: &mut Variation,
     failed_piece: PieceSuggestion,
 ) -> Option<PieceSuggestion> {
     match placements.get_next_piece_to_try_after_failure(failed_piece) {
@@ -133,8 +174,8 @@ fn get_next_piece_to_try_after_failure(
 
 /// Transforms a possible vector of `RequestedPiece`s into  a `String` that can be compared with a
 /// `Placements` path string.
-fn convert_ending_at_to_placement_string(ending_at: Option<Vec<RequestedPiece>>) -> String {
-    ending_at
+fn convert_requested_pieces_to_path_string(pieces: Option<Vec<RequestedPiece>>) -> String {
+    pieces
         .or(Option::Some(Vec::new()))
         .map(|pieces| {
             if pieces.is_empty() {
@@ -149,6 +190,9 @@ fn convert_ending_at_to_placement_string(ending_at: Option<Vec<RequestedPiece>>)
                 for piece in pieces {
                     string.push(piece.name.to_string());
                     string.push('['.to_string());
+                    if piece.orientation_index < 10 {
+                        string.push('0'.to_string());
+                    }
                     string.push(piece.orientation_index.to_string());
                     string.push(']'.to_string());
                     string.push("; ".to_string());
@@ -157,4 +201,16 @@ fn convert_ending_at_to_placement_string(ending_at: Option<Vec<RequestedPiece>>)
             }
         })
         .unwrap()
+}
+
+fn copy_starting_at_pieces(initial_pieces: &Vec<RequestedPiece>) -> Option<Vec<RequestedPiece>> {
+    Option::Some(
+        initial_pieces
+            .iter()
+            .map(|rp| RequestedPiece {
+                name: rp.name,
+                orientation_index: rp.orientation_index,
+            })
+            .collect(),
+    )
 }

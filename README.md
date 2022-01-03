@@ -2,6 +2,8 @@
 
 A [Kanoodle](https://www.educationalinsights.com/kanoodle) solver implemented in [Rust](https://www.rust-lang.org/).
 
+### Rectangle Board
+
 There are 12 Kanoodle pieces (`A` - `L`) that may be placed in various orientations on a `5 x 11` board.
 
 ```
@@ -19,16 +21,49 @@ When all pieces have been successfully placed (in any orientations) that is a so
 
 Example solution:
 ```
-.......................
-.H.H.J.J.J.J.L.I.I.K.K.
-.F.H.H.B.B.L.L.L.I.K.K.
-.F.F.H.B.B.B.L.I.I.C.G.
-.A.A.A.D.E.E.C.C.C.C.G.
-.A.D.D.D.D.E.E.E.G.G.G.
-.......................
+·······················
+·H·H·J·J·J·J·L·I·I·K·K·
+·F·H·H·B·B·L·L·L·I·K·K·
+·F·F·H·B·B·B·L·I·I·C·G·
+·A·A·A·D·E·E·C·C·C·C·G·
+·A·D·D·D·D·E·E·E·G·G·G·
+·······················
 ```
 
-The algorithm implemented here a relatively naive depth-first search for solutions. Board configurations that cannot possibly lead to a solution are pruned early, if possible (this could be smarter).
+### Pyramid Board
+
+The same 12 Kanoodle pieces (`A` - `L`) are arranged in such a way that they form a pyramid. The pieces may be placed in many more orientations.
+
+The pyramid has `5` layers with the following dimensions: `5 x 5`, `4 x 4`, `3 x 3`, `2 x 2`, and `1 x 1`.
+
+Example solution (each layer is viewed from above and sits on the layer below it):
+```
+    ···
+    ·I·
+   ·····
+   ·I·H·
+   ·H·I·
+  ·······
+  ·A·L·H·
+  ·E·H·L·
+  ·H·E·I·
+ ·········
+ ·A·G·G·G·
+ ·E·A·L·G·
+ ·C·E·I·G·
+ ·C·C·C·C·
+··········· 
+·A·D·D·D·D·
+·E·F·L·D·J·
+·B·F·F·L·J·
+·B·B·K·K·J·
+·B·B·K·K·J·
+···········
+```
+
+
+
+Thealgorithm implemented here a relatively naive depth-first search for solutions. Board configurations that cannot possibly lead to a solution are pruned early, if possible (this could be smarter).
 
 ## Running
 
@@ -39,9 +74,14 @@ $ cargo run --release -- --help
 
 Finds all possible solutions starting with the specific piece and orientation and ending at the specific piece and orientation.
 ```shell
-$ cargo run --release -- --starting-at "A[0]" --ending-at "A[1]" 
+$ cargo run --release -- --starting-at "A[00]" --ending-at "A[01]" 
+```
+
+Finds solutions for the pyramid board
+```shell
+$ cargo run --release -- --board-type pyramid --starting-at "A[10]" --ending-at "A[11]"
 ```
 
 ## Notes
 
-This is not an example of good Rust code. It's a project I created to try out Rust.
+This is not an example of good Rust code. It's a beginner flailing around trying to figure things out.
