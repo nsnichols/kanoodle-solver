@@ -1,15 +1,18 @@
 use crate::board::{create_board, BoardType, Variation};
+use crate::layer::Position;
+use crate::pieces::{Piece, Shape};
 use crate::placements::RequestedPiece;
-use crate::{placements, PieceSuggestion, Placements};
+use crate::{placements, PieceSuggestion, Placements, PIECES};
 
-/// Finds solutions between the starting_at piece (inclusive) and the ending_at path (exclusive)
+/// Finds solutions between the initial_state and the ending_at path (exclusive)
 ///
 /// The algorithm used here is a naive depth-first search for solutions. Starting at the
 /// initial piece and orientation, all combinations of other pieces and orientations are
 /// tried. The pieces and orientations are always tried in lexical order. If a piece cannot
 /// be placed on the board, that tree will be abandoned.
 ///
-/// Pieces will always be placed in the top-most, left-most available space on the board.
+/// Pieces will always be placed in the top-most, left-most available space on the board
+/// (except when added as part of the initial state).
 ///
 /// A single iteration of placing a piece looks like the following:
 /// 1. Attempt to place piece 'X' in orientation [n] into next board position
@@ -27,52 +30,20 @@ use crate::{placements, PieceSuggestion, Placements};
 ///      will be removed until we find another piece that can be tried.
 ///     2. Goto with the new piece to try.
 ///   3. Otherwise, goto 1 with the new piece to try.
-///
-/// # Arguments
-/// * `starting_at` - if not passed, `A[00]` will be used.
-/// * `ending_at` - if not passed, a fake path will be created using a piece `Z`. This effectively
-///   allows all solutions after starting_at to be returned.
 pub fn find_solutions(
-    starting_at: Option<Vec<RequestedPiece>>,
-    ending_at: Option<Vec<RequestedPiece>>,
     board_type: Option<BoardType>,
+    initial_state: Option<Vec<String>>,
+    allow_backtracking: Option<bool>,
+    ending_at: Option<Vec<RequestedPiece>>,
 ) {
     let requested_board_type = board_type.unwrap_or(BoardType::Rectangle);
 
     println!("Finding solutions for {:?} board", requested_board_type);
 
-    // Placements keeps track of the available and used pieces at any given time. Pieces are always
-    // ordered lexically (by name and then orientation) to ensure that once we've attempted to place
-    // a piece in a specific context (previous pieces/orientation and positions), we will never try
-    // that same permutation again. That means that as we ask for pieces, we'll eventually run out
-    // of permutations to try and the algorithm will halt.
-    let mut placements = Placements::new(requested_board_type == BoardType::Pyramid);
-
-    // While placements track which pieces and orientations have been tried, the board tracks
-    // where the pieces are placed, whether a piece will fit, and whether the board is in the
-    // solved state.
-    let mut board = create_board(requested_board_type);
+    let (mut board, mut placements, mut next_piece) =
+        initialize(initial_state, &requested_board_type, allow_backtracking);
 
     let mut solutions = 0u32;
-
-    // We always start with an empty board, but the caller can specify which should be the first piece
-    // and orientation they want to try to place. All pieces that come before this piece lexically will
-    // be skipped and never considered for placement in the first slot. For example: If someone requests
-    // to start with K[0], the only solutions that can possibly be found will container either K[0] or
-    // L[0] in the board's first position. (Note: given L[0]'s shape, no solutions with it in the first
-    // position are possible).
-    let initial_pieces = starting_at.unwrap_or(vec![RequestedPiece {
-        name: 'A',
-        orientation_index: 0,
-    }]);
-
-    println!(
-        "Starting at {}",
-        // Just copy everything in the vector and re-wrap in an Option to simplify the conversion
-        // to a string path. This is doing more work than necessary, but it's a one time startup
-        // cost. Improve this later.
-        convert_requested_pieces_to_path_string(copy_starting_at_pieces(&initial_pieces))
-    );
 
     let ending_at_placement = convert_requested_pieces_to_path_string(ending_at);
     println!(
@@ -83,24 +54,6 @@ pub fn find_solutions(
             ending_at_placement.to_string()
         }
     );
-
-    let mut initial_pieces = placements.initialize(initial_pieces);
-    let mut next_piece = initial_pieces.pop();
-
-    // We're going to add all the initial pieces (except for the last one). We've initialized the iterator
-    // with them, but it is up to this logic to commit the last piece. The placements iterator does not save
-    // off its last suggestion until `get_next_piece_to_try_after_success` is called. If the shapes don't fit
-    // here, we panic and tell the caller to fix their initial path.
-    for piece in initial_pieces {
-        if board.does_shape_fit(piece.shape) {
-            board.add_shape(piece.shape, piece.name);
-        } else {
-            panic!(
-                "Unable to add initial piece {} to board. It does not fit. Initialization failed.",
-                piece.name
-            );
-        }
-    }
 
     // Now we start the solution loop. We will continue asking for the next piece to place until we
     // find a solution that exceeds the ending_at path, or we run out of pieces to try in every
@@ -203,14 +156,130 @@ fn convert_requested_pieces_to_path_string(pieces: Option<Vec<RequestedPiece>>) 
         .unwrap()
 }
 
-fn copy_starting_at_pieces(initial_pieces: &Vec<RequestedPiece>) -> Option<Vec<RequestedPiece>> {
-    Option::Some(
-        initial_pieces
-            .iter()
-            .map(|rp| RequestedPiece {
-                name: rp.name,
-                orientation_index: rp.orientation_index,
-            })
-            .collect(),
-    )
+/// Initializes the board, the placement iterator and returns the first piece that needs
+/// to be placed.
+fn initialize(
+    initial_state: Option<Vec<String>>,
+    board_type: &BoardType,
+    allow_backtracking: Option<bool>,
+) -> (Variation, Placements, Option<PieceSuggestion>) {
+    // Default to an empty board
+    let board_state = initial_state.unwrap_or(Vec::new());
+
+    // While placements track which pieces and orientations have been tried, the board tracks
+    // where the pieces are placed, whether a piece will fit, and whether the board is in the
+    // solved state.
+    let mut board = create_board(board_type);
+
+    // Placements keeps track of the available and used pieces at any given time. Pieces are always
+    // ordered lexically (by name and then orientation) to ensure that once we've attempted to place
+    // a piece in a specific context (previous pieces/orientation and positions), we will never try
+    // that same permutation again. That means that as we ask for pieces, we'll eventually run out
+    // of permutations to try and the algorithm will halt.
+    let mut placements = Placements::new(*board_type == BoardType::Pyramid);
+
+    let mut requested_pieces = Vec::new();
+
+    // We're going to try to populate the board with shapes that match the initial board state.
+    let piece_names = get_sorted_piece_names();
+    for piece_name in piece_names {
+        match Shape::parse(&board_state, *piece_name) {
+            Option::Some(shape) => {
+                let piece = get_piece(piece_name);
+                let orientation_index = piece
+                    .orientations
+                    .iter()
+                    .position(|s| shape.eq(s))
+                    .expect("Unrecognized piece orientation");
+
+                requested_pieces.push(RequestedPiece {
+                    name: *piece_name,
+                    orientation_index,
+                });
+
+                let shape_position = parse_shape_position(&board_state, piece_name);
+
+                if board.does_shape_fit_at(&shape, &shape_position) {
+                    board.add_shape_at(&shape, *piece_name, &shape_position);
+                } else {
+                    panic!("Unable to add initial piece {} to board at ({}, {}, {}). It does not fit. Initialization failed.",
+                           piece.letter, shape_position.0, shape_position.1, shape_position.2);
+                }
+            }
+            Option::None => {
+                // This is fine. If the piece wasn't requested, we won't try to add it.
+            }
+        }
+    }
+
+    // Now that we've successfully added the shapes in the initial state to the board, we need to
+    // initialize our placements iterator with those pieces.
+    let suggestion = if requested_pieces.is_empty() {
+        // The initial state was empty. Therefore we need to initialize with A[0].
+        // There are no shapes on the board currently, so the piece that is returned
+        // here can kick off our solution loop.
+        placements
+            .initialize(vec![RequestedPiece {
+                name: 'A',
+                orientation_index: 0,
+            }])
+            .pop()
+    } else {
+        // The initial state had some shapes, so push them all into the iterator.
+        // We need the last initialized piece to get the _next_ piece from the iterator.
+        let last_requested = placements.initialize(requested_pieces).pop().unwrap();
+
+        // We know this piece fits (we added it to the board already). We need to get the _next_
+        // piece and return it as the piece to kick off our solution loop. This gets us into an
+        // equivalent state as the block above.
+        placements
+            .get_next_piece_to_try_after_success(last_requested)
+            .map(|success| success.piece)
+    };
+
+    if !allow_backtracking.unwrap_or(false) {
+        placements.prevent_backtracking_beyond_this_piece(Option::None);
+    }
+
+    println!("Initial board state");
+    println!("{}", board);
+
+    return (board, placements, suggestion);
+}
+
+fn parse_shape_position(board_state: &Vec<String>, letter: &char) -> Position {
+    let layer_count = board_state.len();
+    for layer_index in 0..layer_count {
+        let chars = board_state.get(layer_index).unwrap().chars();
+        let mut row = 0;
+        let mut col = 0;
+
+        for ch in chars {
+            match ch {
+                '\n' => {
+                    row += 1;
+                    col = 0;
+                }
+                c if c == *letter => {
+                    return Position(layer_index, row, col);
+                }
+                _ => col += 1,
+            }
+        }
+    }
+
+    panic!(
+        "Shape {} requested, but not found in initial board state",
+        letter
+    );
+}
+
+fn get_sorted_piece_names() -> Vec<&'static char> {
+    let mut keys: Vec<&char> = (*PIECES).keys().collect();
+    keys.sort();
+    return keys;
+}
+
+fn get_piece(name: &char) -> &Piece {
+    (*PIECES).get(name).unwrap()
 }

@@ -55,7 +55,7 @@ impl Shape {
     /// Creates a new shape that has been rotated 90 degrees clockwise
     pub fn rotate(&self) -> Shape {
         let mut rotated = self.layers.clone();
-        Shape::transform_each_layer_2d(&self.layers, &mut rotated, |row, col, max_col| {
+        transform_each_layer_2d(&self.layers, &mut rotated, |row, col, max_col| {
             (max_col - col, row)
         });
         Shape {
@@ -67,7 +67,7 @@ impl Shape {
     /// Creates a new shape that is a mirror image of the shape.
     pub fn reflect(&self) -> Shape {
         let mut reflected = self.layers.clone();
-        Shape::transform_each_layer_2d(&self.layers, &mut reflected, |row, col, _| (col, row));
+        transform_each_layer_2d(&self.layers, &mut reflected, |row, col, _| (col, row));
         Shape {
             layers: reflected,
             is_3d: self.is_3d,
@@ -77,7 +77,7 @@ impl Shape {
     // Creates a new shape that has been shifted to the top left to remove whitespace.
     pub fn snap_to_top_left(&self) -> Shape {
         // Shift up until we find a non-falsy value in a row at any layer.
-        let mut layers = Shape::shift(&self.layers, |ls| {
+        let mut layers = shift(&self.layers, |ls| {
             if !ls.0[0][0]
                 && !ls.0[0][1]
                 && !ls.0[0][2]
@@ -101,7 +101,7 @@ impl Shape {
         });
 
         // Shift left until we find a non-falsy value in a column at any layer.
-        layers = Shape::shift(&layers, |ls| {
+        layers = shift(&layers, |ls| {
             if !ls.0[0][0]
                 && !ls.0[1][0]
                 && !ls.0[2][0]
@@ -151,7 +151,7 @@ impl Shape {
 
         // The shape isn't 3d right now so we only have to worry about layer 0 when
         // shifting it.
-        let layer0 = &mut Shape::shift(&aligned.layers, |ls| {
+        let layer0 = &mut shift(&aligned.layers, |ls| {
             if ls.0[0][1] || ls.0[1][2] || ls.0[2][3] || ls.0[3][4] {
                 ShiftInstruction::Down
             } else {
@@ -208,79 +208,171 @@ impl Shape {
         };
     }
 
-    fn shift(
-        layers: &ShapeLayers,
-        next_instruction: fn(to_be_shifted: &ShapeLayers) -> ShiftInstruction,
-    ) -> ShapeLayers {
-        let mut source = layers.clone();
-        let mut dest = layers.clone();
+    /// Parses a vector of strings into a shape. This vector may contain
+    /// multiple shapes. The specific shape that will be parsed is the one
+    /// specified by the letter.
+    ///
+    /// Each string in the vector represents a shape layer (to support
+    /// parsing 3d shapes). Rows in a layer are separated by new lines.
+    ///
+    /// # Examples
+    ///
+    /// Given the vector:
+    /// ```
+    /// ["AAABB\nA.BBB"]
+    /// ```
+    /// Shapes `A` and `B` can be parsed from it.
+    ///
+    /// Given the vector:
+    /// ```
+    /// ["A..\n...\n...\n",  "A.\n.A\n", "A"]
+    /// ```
+    /// 3D shape `A` can be parsed from it.
+    /// ```
+    ///   A
+    ///  A A
+    /// A . .
+    /// ```
+    pub fn parse(strings: &Vec<String>, letter: char) -> Option<Shape> {
+        // First we need to figure out if the shape is offset.
+        // Shapes are 5x5 at the most. If we're parsing a string
+        // that is larger than that, we need to make sure we don't
+        // overflow the shape dimensions.
+        let mut row_offset = usize::MAX;
+        let mut col_offset = usize::MAX;
 
-        let mut max_size = 0usize;
-        for layer in 0..layers.layer_count() {
-            let (size, _) = layers.dimensions(layer);
-            max_size = max(max_size, size);
-        }
-
-        // Allow full shifts in every direction before giving up.
-        let mut remaining_iterations = max_size * 4;
-
-        while remaining_iterations > 0 {
-            match next_instruction(&dest) {
-                ShiftInstruction::Left => {
-                    Shape::transform_each_layer_2d(&source, &mut dest, |row, col, size| {
-                        (row, if col == size { 0usize } else { col + 1 })
-                    });
-                }
-                ShiftInstruction::Up => {
-                    Shape::transform_each_layer_2d(&source, &mut dest, |row, col, size| {
-                        (if row == size { 0usize } else { row + 1 }, col)
-                    });
-                }
-                // ShiftInstruction::Right => {
-                //     Shape::transform_each_layer_2d(&source, &mut dest, |row, col, size| {
-                //         (row, if col == 0 { size } else { col - 1 })
-                //     });
-                // }
-                ShiftInstruction::Down => {
-                    Shape::transform_each_layer_2d(&source, &mut dest, |row, col, size| {
-                        (if row == 0 { size } else { row - 1 }, col)
-                    });
-                }
-                ShiftInstruction::Stop => {
-                    return dest;
+        strings.iter().for_each(|string| {
+            let mut row = 0usize;
+            let mut col = 0usize;
+            for ch in string.chars() {
+                match ch {
+                    '\n' => {
+                        row += 1;
+                        col = 0;
+                    }
+                    c if c == letter => {
+                        row_offset = row_offset.min(row);
+                        col_offset = col_offset.min(col);
+                        col += 1;
+                    }
+                    _ => col += 1,
                 }
             }
+        });
 
-            // Copy values back into source so we can updated dest again in the next iteration
-            // of the loop
-            std::mem::swap(&mut source, &mut dest);
-
-            remaining_iterations -= 1;
-        }
-
-        panic!("Detected infinite loop in shift logic");
-    }
-
-    fn transform_each_layer_2d(
-        layers: &ShapeLayers,
-        to_be_transformed: &mut ShapeLayers,
-        transformer: fn(usize, usize, usize) -> (usize, usize),
-    ) {
-        let layer_count = layers.layer_count();
+        // Now that we have our offsets, we can actually create the shape.
+        let mut layers = ShapeLayers::default();
+        let layer_count = strings.len();
+        let mut layers_with_shape = HashSet::new();
 
         for layer in 0..layer_count {
-            let (row_count, col_count) = layers.dimensions(layer);
-            assert_eq!(
-                row_count, col_count,
-                "A non-square layer cannot be transformed"
-            );
-            let size = row_count - 1;
-            for row in 0..row_count {
-                for col in 0..col_count {
-                    let (transformed_row, transformed_col) = transformer(row, col, size);
-                    let val = layers.at(layer, transformed_row, transformed_col);
-                    to_be_transformed.update(layer, row, col, *val);
+            let string: &String = strings.get(layer).unwrap();
+            let mut row = 0usize;
+            let mut col = 0usize;
+            for ch in string.chars() {
+                match ch {
+                    '\n' => {
+                        row += 1;
+                        col = 0;
+                    }
+                    c if c == letter => {
+                        // These offset subtractions should never overflow since they are always the
+                        // minimum possible values. They should always be <= row and col everywhere.
+                        layers.update(layer, row - row_offset, col - col_offset, true);
+                        layers_with_shape.insert(layer);
+                        col += 1;
+                    }
+                    _ => col += 1,
                 }
+            }
+        }
+
+        if layers.find(&true).is_some() {
+            Option::Some(
+                Shape {
+                    layers,
+                    is_3d: layers_with_shape.len() > 1,
+                }
+                .snap_to_top_left(),
+            )
+        } else {
+            Option::None
+        }
+    }
+}
+
+fn shift(
+    layers: &ShapeLayers,
+    next_instruction: fn(to_be_shifted: &ShapeLayers) -> ShiftInstruction,
+) -> ShapeLayers {
+    let mut source = layers.clone();
+    let mut dest = layers.clone();
+
+    let mut max_size = 0usize;
+    for layer in 0..layers.layer_count() {
+        let (size, _) = layers.dimensions(layer);
+        max_size = max(max_size, size);
+    }
+
+    // Allow full shifts in every direction before giving up.
+    let mut remaining_iterations = max_size * 4;
+
+    while remaining_iterations > 0 {
+        match next_instruction(&dest) {
+            ShiftInstruction::Left => {
+                transform_each_layer_2d(&source, &mut dest, |row, col, size| {
+                    (row, if col == size { 0usize } else { col + 1 })
+                });
+            }
+            ShiftInstruction::Up => {
+                transform_each_layer_2d(&source, &mut dest, |row, col, size| {
+                    (if row == size { 0usize } else { row + 1 }, col)
+                });
+            }
+            // ShiftInstruction::Right => {
+            //     transform_each_layer_2d(&source, &mut dest, |row, col, size| {
+            //         (row, if col == 0 { size } else { col - 1 })
+            //     });
+            // }
+            ShiftInstruction::Down => {
+                transform_each_layer_2d(&source, &mut dest, |row, col, size| {
+                    (if row == 0 { size } else { row - 1 }, col)
+                });
+            }
+            ShiftInstruction::Stop => {
+                return dest;
+            }
+        }
+
+        // Copy values back into source so we can updated dest again in the next iteration
+        // of the loop
+        std::mem::swap(&mut source, &mut dest);
+
+        remaining_iterations -= 1;
+    }
+
+    panic!("Detected infinite loop in shift logic");
+}
+
+fn transform_each_layer_2d(
+    layers: &ShapeLayers,
+    to_be_transformed: &mut ShapeLayers,
+    transformer: fn(usize, usize, usize) -> (usize, usize),
+) {
+    let layer_count = layers.layer_count();
+
+    for layer in 0..layer_count {
+        let (row_count, col_count) = layers.dimensions(layer);
+        assert_eq!(
+            row_count, col_count,
+            "A non-square layer cannot be transformed"
+        );
+        let size = row_count - 1;
+        for row in 0..row_count {
+            for col in 0..col_count {
+                let (transformed_row, transformed_col) = transformer(row, col, size);
+                let val = layers.at(layer, transformed_row, transformed_col);
+                to_be_transformed.update(layer, row, col, *val);
             }
         }
     }
@@ -348,23 +440,10 @@ impl Piece {
     /// The remaining orientations are automatically derived from the
     /// default orientation.
     pub fn parse(value: &str, letter: char) -> Piece {
-        let mut cells = [[false; 4]; 4];
-        let mut row: usize = 0;
-        let mut col: usize = 0;
+        let to_parse = vec![value.to_string()];
+        let shape = Shape::parse(&to_parse, letter).unwrap();
 
-        for v in value.chars() {
-            if v == '\n' {
-                row += 1;
-                col = 0;
-                continue;
-            }
-            if v == letter {
-                cells[row][col] = true;
-            }
-            col += 1;
-        }
-
-        let orientations = generate_orientations(cells)
+        let orientations = generate_orientations(shape.layers.0)
             .into_iter()
             .map(|s| s)
             .collect();
@@ -382,11 +461,11 @@ impl Piece {
 /// The orientations in the vector returned in a consistent order.
 ///
 /// `to_int` determines the sort order.
-fn generate_orientations(cells: [[bool; 4]; 4]) -> Vec<Shape> {
+fn generate_orientations(cells: [[bool; 5]; 5]) -> Vec<Shape> {
     let mut set = HashSet::new();
     let mut layer0 = [[false; 5]; 5];
-    for i in 0..4 {
-        for j in 0..4 {
+    for i in 0..5 {
+        for j in 0..5 {
             layer0[i][j] = cells[i][j];
         }
     }

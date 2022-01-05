@@ -18,41 +18,56 @@ mod solver;
     about = "Finds Kanoodle (https://www.educationalinsights.com/kanoodle) solutions"
 )]
 struct CliOptions {
-    /// Indicates the initial pieces, the solver should start with. If the pieces cannot be
-    /// successfully added to the board in the order they are specified, the solver will
-    /// panic.
-    ///
-    /// Orientations must have leading zeros if they are single digits.
-    ///
-    /// Defaults to A[00].
-    ///
-    /// Example -s "A[00]" "J[00]" "K[00]"
-    #[structopt(short, long)]
-    starting_at: Option<Vec<RequestedPiece>>,
-
     /// Indicates the ending pieces at which the solver should sto finding solutions.
     /// Only solutions that are found between the starting pieces and orientation and
     /// this path will be found.
     ///
     /// Orientations must have leading zeros if they are single digits.
     ///
-    /// Defaults to no limit.
+    /// Defaults to no limit (or all permutations beyond the initial state if
+    /// backtracking is not allowed).
     ///
-    /// Example: -c "B[00]" "C[01]"
+    /// Example: --ending-at "B[00]" "C[01]"
     #[structopt(short, long)]
     ending_at: Option<Vec<RequestedPiece>>,
 
     /// One or more pieces and orientations to display. When this option is present,
     /// other options passed will be ignored.
-    #[structopt(short, long)]
+    ///
+    /// Example: --display-pieces "A[00]" "B[02]" "C[10]"
+    #[structopt(short = "p", long)]
     display_pieces: Option<Vec<RequestedPiece>>,
 
     /// Indicates which type of board (Rectangle or Pyramid) should be used
     /// when finding solutions.
     ///
     /// Defaults to "rectangular"
-    #[structopt(short, long)]
+    #[structopt(short = "t", long)]
     board_type: Option<BoardType>,
+
+    /// Specifies the initial state of the board the solver should use.
+    ///
+    /// If the board is multi-layered (the pyramid) then each string
+    /// passed is treated as a separate layer. New lines within the
+    /// strings separate the rows.
+    ///
+    /// ```
+    /// --initial-state \
+    /// "AAABBB
+    /// A  BB"
+    /// ```
+    #[structopt(short, long)]
+    initial_state: Option<Vec<String>>,
+
+    /// If an initial state is specified, enabling this flag lets
+    /// the solver remove pieces from the initial state once it has
+    /// exhausted all possible solutions given the initial state.
+    ///
+    /// This flag has no effect when no initial state is passed.
+    ///
+    /// Defaults to false
+    #[structopt(short, long)]
+    allow_backtracking: Option<bool>,
 }
 
 fn main() {
@@ -83,5 +98,10 @@ fn main() {
         return;
     }
 
-    solver::find_solutions(options.starting_at, options.ending_at, options.board_type);
+    solver::find_solutions(
+        options.board_type,
+        options.initial_state,
+        options.allow_backtracking,
+        options.ending_at,
+    );
 }

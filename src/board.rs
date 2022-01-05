@@ -36,13 +36,20 @@ impl<T: Layers<char>> Board<T> {
     /// at whatever the board's next_pos is. The shape must fit in its
     /// entirety on the board and cannot overlap any existing pieces.
     pub fn does_shape_fit(&self, shape: &Shape) -> bool {
+        let position = Position(self.next_pos.0, self.next_pos.1, self.next_pos.2);
+        self.does_shape_fit_at(shape, &position)
+    }
+
+    /// Determines if the board can hold the requested shape at the requested position.
+    /// The shape must fit in its entirety on the board and cannot overlap any existing pieces.
+    pub fn does_shape_fit_at(&self, shape: &Shape, position: &Position) -> bool {
         // Shapes may not be aligned such that their (0, 0) cell is set, but we must always add
         // the shape to the board in a way that fills the next_pos' position. Therefore, we need
         // to know how far we'll need to shift the shape when placing it on the board.
         let (shape_row_offset, shape_col_offset) = calculate_shape_offsets(shape);
 
         let board_layer_count = self.layers.layer_count();
-        let Position(layer, next_row, next_col) = self.next_pos;
+        let Position(layer, next_row, next_col) = position;
 
         // The shape and board layers are not necessarily equal. If we are trying to place a piece
         // where the next_pos layer is 2, the 0-layer of the shape will be matched against the 2-layer
@@ -130,12 +137,20 @@ impl<T: Layers<char>> Board<T> {
         true
     }
 
-    /// Adds the specified shape to the board.
+    /// Adds the specified shape to the board in the next open position.
     /// This method does not check if the shape can be added. Do not call this method
     /// unless you know the shape already fits on the board.
     pub fn add_shape(&mut self, shape: &Shape, letter: char) {
+        let position = Position(self.next_pos.0, self.next_pos.1, self.next_pos.2);
+        self.add_shape_at(shape, letter, &position);
+    }
+
+    /// Adds the specified shape to the board at the specified position.
+    /// This method does not check if the shape can be added. Do not call this method
+    /// unless you know the shape already fits on the board.
+    pub fn add_shape_at(&mut self, shape: &Shape, letter: char, position: &Position) {
         let (shape_row_offset, shape_col_offset) = calculate_shape_offsets(shape);
-        let Position(layer, next_row, next_col) = self.next_pos;
+        let Position(layer, next_row, next_col) = position;
 
         for shape_layer_index in 0..shape.layer_count() {
             // Starting at the bottom layer of the shape, we place the shape
@@ -148,8 +163,8 @@ impl<T: Layers<char>> Board<T> {
             for shape_row in 0..shape_size {
                 for shape_col in 0..shape_size {
                     if shape.is_set(shape_layer_index, shape_row, shape_col) {
-                        let board_row = shape_row - shape_row_offset + next_row;
-                        let board_col = shape_col - shape_col_offset + next_col;
+                        let board_row = next_row + shape_row - shape_row_offset;
+                        let board_col = next_col + shape_col - shape_col_offset;
                         self.layers
                             .update(board_layer, board_row, board_col, letter);
                         no_parts_found_in_layer = false;
@@ -256,10 +271,24 @@ impl Variation {
         }
     }
 
+    pub fn does_shape_fit_at(&self, shape: &Shape, position: &Position) -> bool {
+        match self {
+            Variation::Rectangle(r) => r.does_shape_fit_at(shape, position),
+            Variation::Pyramid(p) => p.does_shape_fit_at(shape, position),
+        }
+    }
+
     pub fn add_shape(&mut self, shape: &Shape, letter: char) {
         match self {
             Variation::Rectangle(r) => r.add_shape(shape, letter),
             Variation::Pyramid(p) => p.add_shape(shape, letter),
+        }
+    }
+
+    pub fn add_shape_at(&mut self, shape: &Shape, letter: char, position: &Position) {
+        match self {
+            Variation::Rectangle(r) => r.add_shape_at(shape, letter, position),
+            Variation::Pyramid(p) => p.add_shape_at(shape, letter, position),
         }
     }
 
@@ -281,8 +310,8 @@ impl Display for Variation {
 }
 
 // Creates a new board of the requested type.
-pub fn create_board(board_type: BoardType) -> Variation {
-    return if board_type == BoardType::Rectangle {
+pub fn create_board(board_type: &BoardType) -> Variation {
+    return if *board_type == BoardType::Rectangle {
         Variation::Rectangle(<Board<Rectangle>>::new())
     } else {
         Variation::Pyramid(<Board<Pyramid>>::new())

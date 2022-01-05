@@ -72,14 +72,16 @@ Find all possible solutions. This is slow...
 $ cargo run --release -- --help
 ```
 
-Finds all possible solutions starting with the specific piece and orientation and ending at the specific piece and orientation.
+Finds all possible solutions starting with a specific board state.
 ```shell
-$ cargo run --release -- --starting-at "A[00]" --ending-at "A[01]" 
+$ cargo run --release -- --initial-state \
+"AAABBB
+AKKBB" 
 ```
 
 Finds solutions for the pyramid board
 ```shell
-$ cargo run --release -- --board-type pyramid --starting-at "A[10]" --ending-at "A[11]"
+$ cargo run --release -- --board-type pyramid
 ```
 
 ## Notes

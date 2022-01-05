@@ -40,6 +40,7 @@ pub struct Placements {
     positions: Vec<PieceSuggestion>,
     used_letters: HashSet<char>,
     allow_3d_orientations: bool,
+    prevent_backtracking_beyond_piece: char,
 }
 
 #[derive(Debug)]
@@ -80,6 +81,7 @@ impl Placements {
             positions: Vec::new(),
             used_letters: HashSet::new(),
             allow_3d_orientations,
+            prevent_backtracking_beyond_piece: '?',
         }
     }
 
@@ -127,6 +129,16 @@ impl Placements {
         return suggestions;
     }
 
+    pub fn prevent_backtracking_beyond_this_piece(&mut self, piece: Option<char>) {
+        match piece {
+            Option::Some(name) => self.prevent_backtracking_beyond_piece = name,
+            Option::None => match self.positions.last() {
+                Option::Some(p) => self.prevent_backtracking_beyond_piece = p.name,
+                _ => {}
+            },
+        }
+    }
+
     /// Removes the last placed piece (if there was one) and returns it.
     ///
     /// Normally, if all 12 pieces are in use, that means a particular solution has been found,
@@ -137,8 +149,14 @@ impl Placements {
     pub fn remove_last_piece(&mut self) -> Option<PieceSuggestion> {
         match self.positions.pop() {
             Option::Some(previous) => {
-                self.used_letters.remove(&previous.name);
-                Option::Some(previous)
+                if self.prevent_backtracking_beyond_piece == previous.name {
+                    // We're done here. The iterator was configured to stop
+                    // if this piece got removed.
+                    Option::None
+                } else {
+                    self.used_letters.remove(&previous.name);
+                    Option::Some(previous)
+                }
             }
             _ => Option::None,
         }
@@ -219,6 +237,11 @@ impl Placements {
 
         let previous_success = previous_success_opt.unwrap();
         self.used_letters.remove(&previous_success.name);
+        if previous_success.name == self.prevent_backtracking_beyond_piece {
+            // The iterator is configured to stop when this piece is removed
+            // So we're done here.
+            return Option::None;
+        }
 
         // Our previous success was actually a failure, take the previous success and
         // ask for the next piece/orientation that fits in the position we just emptied.
