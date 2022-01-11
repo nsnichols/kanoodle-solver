@@ -72,17 +72,43 @@ Find all possible solutions. This is slow...
 $ cargo run --release -- --help
 ```
 
-Finds all possible solutions starting with a specific board state.
+* Finds all possible solutions starting with a specific board state.
 ```shell
-$ cargo run --release -- --initial-state \
-"AAABBB
-AKKBB" 
+$ cargo run --release -- < board-state.txt
 ```
+*Note: The file should contain a valid board with pieces defined using their letter names. New lines indicate new rows. Any non piece name character can be used (including a space). Empty rows and columns do not need to be included in the state, unless they provide spacing between actual pieces.*
+  ```text
+  AAABBB.....
+  A...BB.....
+  ...........
+  ..........F
+  .........FF
+  ```
 
-Finds solutions for the pyramid board
+* Finds solutions for the pyramid board
 ```shell
 $ cargo run --release -- --board-type pyramid
 ```
+*Note: When initializing a pyramid board, new lines still separate rows, but empty lines indicate layer breaks. Additionally, layers are specified in biggest to smallest (backwards from how the pyramid actually sits).*
+
+```text
+ABB..
+BBB..
+.....
+.....
+.....
+
+A...
+.A..
+....
+....
+
+A..
+...
+...
+```
+
+
 
 ## Notes
 

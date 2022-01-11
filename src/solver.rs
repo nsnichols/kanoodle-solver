@@ -61,14 +61,12 @@ pub fn find_solutions(
     while next_piece.is_some() {
         let p = next_piece.unwrap();
 
-        if board.does_shape_fit(p.shape) {
-            board.add_shape(p.shape, p.name);
-            next_piece = placements
+        next_piece = match board.try_add_shape(p.shape, p.name) {
+            Result::Ok(_) => placements
                 .get_next_piece_to_try_after_success(p)
-                .map(|success| success.piece);
-        } else {
-            next_piece = get_next_piece_to_try_after_failure(&mut placements, &mut board, p);
-        }
+                .map(|success| success.piece),
+            Result::Err(_) => get_next_piece_to_try_after_failure(&mut placements, &mut board, p),
+        };
 
         // If we have no pieces remaining to try then we can also check if the board is solved
         // We avoid checking that if we still have pieces since it cannot be solved in that case,
@@ -186,11 +184,18 @@ fn initialize(
         match Shape::parse(&board_state, *piece_name) {
             Option::Some(shape) => {
                 let piece = get_piece(piece_name);
+                // This builds a string when we might not need it, but it just happens on startup
+                // for at most 12 pieces. So it really shouldn't matter.
+                let expectation = format!(
+                    "Unrecognized piece orientation for [{}]\n{}",
+                    piece_name, shape
+                );
+
                 let orientation_index = piece
                     .orientations
                     .iter()
                     .position(|s| shape.eq(s))
-                    .expect("Unrecognized piece orientation");
+                    .expect(&expectation);
 
                 requested_pieces.push(RequestedPiece {
                     name: *piece_name,
@@ -199,9 +204,8 @@ fn initialize(
 
                 let shape_position = parse_shape_position(&board_state, piece_name);
 
-                if board.does_shape_fit_at(&shape, &shape_position) {
-                    board.add_shape_at(&shape, *piece_name, &shape_position);
-                } else {
+                if let Result::Err(_) = board.try_add_shape_at(&shape, *piece_name, &shape_position)
+                {
                     panic!("Unable to add initial piece {} to board at ({}, {}, {}). It does not fit. Initialization failed.",
                            piece.letter, shape_position.0, shape_position.1, shape_position.2);
                 }

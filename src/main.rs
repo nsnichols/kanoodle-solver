@@ -1,3 +1,4 @@
+use std::io::Read;
 use structopt::StructOpt;
 
 use crate::board::BoardType;
@@ -15,7 +16,7 @@ mod solver;
 #[derive(Debug, StructOpt)]
 #[structopt(
     name = "kanoodle-solver",
-    about = "Finds Kanoodle (https://www.educationalinsights.com/kanoodle) solutions"
+    about = "Finds Kanoodle (https://www.educationalinsights.com/kanoodle) solutions. An initial board state may be sent in stdin."
 )]
 struct CliOptions {
     /// Indicates the ending pieces at which the solver should sto finding solutions.
@@ -44,20 +45,6 @@ struct CliOptions {
     /// Defaults to "rectangular"
     #[structopt(short = "t", long)]
     board_type: Option<BoardType>,
-
-    /// Specifies the initial state of the board the solver should use.
-    ///
-    /// If the board is multi-layered (the pyramid) then each string
-    /// passed is treated as a separate layer. New lines within the
-    /// strings separate the rows.
-    ///
-    /// ```
-    /// --initial-state \
-    /// "AAABBB
-    /// A  BB"
-    /// ```
-    #[structopt(short, long)]
-    initial_state: Option<Vec<String>>,
 
     /// If an initial state is specified, enabling this flag lets
     /// the solver remove pieces from the initial state once it has
@@ -100,8 +87,23 @@ fn main() {
 
     solver::find_solutions(
         options.board_type,
-        options.initial_state,
+        read_in_initial_state(),
         options.allow_backtracking,
         options.ending_at,
     );
+}
+
+fn read_in_initial_state() -> Option<Vec<String>> {
+    if atty::is(atty::Stream::Stdin) {
+        return Option::None;
+    }
+
+    let mut stdin = std::io::stdin();
+    let mut input = String::new();
+    match stdin.read_to_string(&mut input) {
+        _ => (),
+    }
+
+    let lines: Vec<String> = input.split("\n\n").map(|s| s.to_string()).collect();
+    Option::Some(lines)
 }

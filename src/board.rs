@@ -1,4 +1,5 @@
 use crate::{layer::Position, pieces::Shape, Layers};
+use arrayvec::ArrayVec;
 use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
@@ -21,7 +22,7 @@ define_layers!(Pyramid, char, EMPTY_SLOT,
 /// possible position a piece may be added.
 pub struct Board<T: Layers<char>> {
     layers: T,
-    next_pos: Position,
+    pub next_pos: Position,
 }
 
 impl<T: Layers<char>> Board<T> {
@@ -32,17 +33,38 @@ impl<T: Layers<char>> Board<T> {
         self.layers.find(&EMPTY_SLOT).is_none()
     }
 
-    /// Determines if the board can hold the requested shape positioned
-    /// at whatever the board's next_pos is. The shape must fit in its
-    /// entirety on the board and cannot overlap any existing pieces.
-    pub fn does_shape_fit(&self, shape: &Shape) -> bool {
+    /// Adds the specified shape to the board in the next open position.
+    ///
+    /// If it does not fit, an error will be returned.
+    pub fn try_add_shape(&mut self, shape: &Shape, letter: char) -> Result<(), ()> {
         let position = Position(self.next_pos.0, self.next_pos.1, self.next_pos.2);
-        self.does_shape_fit_at(shape, &position)
+        self.try_add_shape_at(shape, letter, &position)
     }
 
-    /// Determines if the board can hold the requested shape at the requested position.
-    /// The shape must fit in its entirety on the board and cannot overlap any existing pieces.
-    pub fn does_shape_fit_at(&self, shape: &Shape, position: &Position) -> bool {
+    /// Adds the specified shape to the board at the specified position.
+    ///
+    /// If it does not fit, an error will be returned.
+    pub fn try_add_shape_at(
+        &mut self,
+        shape: &Shape,
+        letter: char,
+        position: &Position,
+    ) -> Result<(), ()> {
+        // Keep mutable references to the cells that we need to updated with the letter
+        // if we find the shape actually fits.
+        let mut positions_to_update: ArrayVec<Position, 5> = ArrayVec::new();
+
+        // We'll call this macro if the shape fits. It's not a lambda to avoid borrowing issues
+        macro_rules! add_shape {
+            ($self:ident, $positions_to_update:ident, $letter:ident, $empty_slot:ident) => {{
+                for pos in $positions_to_update {
+                    $self.layers.update(pos.0, pos.1, pos.2, $letter);
+                }
+                $self.next_pos = $self.layers.find(&$empty_slot).unwrap_or(Position(0, 0, 0));
+                Result::Ok(())
+            }};
+        }
+
         // Shapes may not be aligned such that their (0, 0) cell is set, but we must always add
         // the shape to the board in a way that fills the next_pos' position. Therefore, we need
         // to know how far we'll need to shift the shape when placing it on the board.
@@ -81,7 +103,7 @@ impl<T: Layers<char>> Board<T> {
                         if shape.is_set(shape_layer_index, shape_row, shape_col) {
                             // We found a piece of the shape in the layer, therefore
                             // this shape cannot fit on the board.
-                            return false;
+                            return Result::Err(());
                         }
                     }
                 }
@@ -89,7 +111,7 @@ impl<T: Layers<char>> Board<T> {
                 // If we get this point, there was no part of the shape in this layer
                 // and there cannot be any part of the shape on a higher layer either.
                 // Therefore, we can say the shape fits.
-                return true;
+                return add_shape!(self, positions_to_update, letter, EMPTY_SLOT);
             }
 
             // We have at least one board layer in which we can see if the shape fits.
@@ -113,15 +135,16 @@ impl<T: Layers<char>> Board<T> {
                             // Our shape does not fit in the available space on this layer. There is at least
                             // one part of it that would be extend off the edge of the board if we tried to
                             // place it.
-                            return false;
+                            return Result::Err(());
                         }
                         if *self.layers.at(board_layer, board_row, board_col) != EMPTY_SLOT {
                             // Our shape does not fit here. There is at least on part of it that would overlap
                             // with an existing shape already on the board.
-                            return false;
+                            return Result::Err(());
                         }
 
                         no_parts_found_in_layer = false;
+                        positions_to_update.push(Position(board_layer, board_row, board_col));
                     }
                 }
             }
@@ -129,57 +152,12 @@ impl<T: Layers<char>> Board<T> {
             if !shape.is_3d || no_parts_found_in_layer {
                 // If the shape isn't 3d or the shape does not have any parts in the layer, that
                 // means we can skip the remaining layers. We know the shape must fit.
-                return true;
+                return add_shape!(self, positions_to_update, letter, EMPTY_SLOT);
             }
         }
 
         // All our checks passed successfully! The shape fits.
-        true
-    }
-
-    /// Adds the specified shape to the board in the next open position.
-    /// This method does not check if the shape can be added. Do not call this method
-    /// unless you know the shape already fits on the board.
-    pub fn add_shape(&mut self, shape: &Shape, letter: char) {
-        let position = Position(self.next_pos.0, self.next_pos.1, self.next_pos.2);
-        self.add_shape_at(shape, letter, &position);
-    }
-
-    /// Adds the specified shape to the board at the specified position.
-    /// This method does not check if the shape can be added. Do not call this method
-    /// unless you know the shape already fits on the board.
-    pub fn add_shape_at(&mut self, shape: &Shape, letter: char, position: &Position) {
-        let (shape_row_offset, shape_col_offset) = calculate_shape_offsets(shape);
-        let Position(layer, next_row, next_col) = position;
-
-        for shape_layer_index in 0..shape.layer_count() {
-            // Starting at the bottom layer of the shape, we place the shape
-            // in the layer specified by next_pos. As the shape layer increases,
-            // the board layer must as well.
-            let board_layer = layer + shape_layer_index;
-            let (shape_size, _) = shape.dimensions(shape_layer_index);
-            let mut no_parts_found_in_layer = true;
-
-            for shape_row in 0..shape_size {
-                for shape_col in 0..shape_size {
-                    if shape.is_set(shape_layer_index, shape_row, shape_col) {
-                        let board_row = next_row + shape_row - shape_row_offset;
-                        let board_col = next_col + shape_col - shape_col_offset;
-                        self.layers
-                            .update(board_layer, board_row, board_col, letter);
-                        no_parts_found_in_layer = false;
-                    }
-                }
-            }
-
-            if !shape.is_3d || no_parts_found_in_layer {
-                // If the shape isn't 3d or the shape does not have any parts in the layer, that
-                // means we can skip the remaining layers. We've finished adding the shape.
-                break;
-            }
-        }
-
-        self.next_pos = self.layers.find(&EMPTY_SLOT).unwrap_or(Position(0, 0, 0));
+        return add_shape!(self, positions_to_update, letter, EMPTY_SLOT);
     }
 
     /// Removes the space with the specified name from the board (if it is present).
@@ -264,31 +242,22 @@ impl Variation {
         }
     }
 
-    pub fn does_shape_fit(&self, shape: &Shape) -> bool {
+    pub fn try_add_shape(&mut self, shape: &Shape, letter: char) -> Result<(), ()> {
         match self {
-            Variation::Rectangle(r) => r.does_shape_fit(shape),
-            Variation::Pyramid(p) => p.does_shape_fit(shape),
+            Variation::Rectangle(r) => r.try_add_shape(shape, letter),
+            Variation::Pyramid(p) => p.try_add_shape(shape, letter),
         }
     }
 
-    pub fn does_shape_fit_at(&self, shape: &Shape, position: &Position) -> bool {
+    pub fn try_add_shape_at(
+        &mut self,
+        shape: &Shape,
+        letter: char,
+        position: &Position,
+    ) -> Result<(), ()> {
         match self {
-            Variation::Rectangle(r) => r.does_shape_fit_at(shape, position),
-            Variation::Pyramid(p) => p.does_shape_fit_at(shape, position),
-        }
-    }
-
-    pub fn add_shape(&mut self, shape: &Shape, letter: char) {
-        match self {
-            Variation::Rectangle(r) => r.add_shape(shape, letter),
-            Variation::Pyramid(p) => p.add_shape(shape, letter),
-        }
-    }
-
-    pub fn add_shape_at(&mut self, shape: &Shape, letter: char, position: &Position) {
-        match self {
-            Variation::Rectangle(r) => r.add_shape_at(shape, letter, position),
-            Variation::Pyramid(p) => p.add_shape_at(shape, letter, position),
+            Variation::Rectangle(r) => r.try_add_shape_at(shape, letter, position),
+            Variation::Pyramid(p) => p.try_add_shape_at(shape, letter, position),
         }
     }
 
